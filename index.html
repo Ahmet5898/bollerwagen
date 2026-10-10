@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Bollerwagen Steuerung</title>
+<style>
+  :root{
+    --bg:#111418; --panel:#1b2027; --line:#2c333d; --text:#e8ecf1; --muted:#8b95a3;
+    --accent:#3b82f6; --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overscroll-behavior:none}
+  body{display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+  header{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  header h1{font-size:17px;margin:0;flex:1}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--danger);flex:none}
+  .dot.on{background:var(--ok)} .dot.busy{background:var(--warn)}
+  button{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:10px 14px;cursor:pointer}
+  button:active{transform:scale(.97)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.danger{background:var(--danger);border-color:var(--danger);color:#fff}
+  #status{color:var(--muted);font-size:13px;padding:6px 16px;min-height:28px}
+  nav{display:flex;margin:0 16px;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  nav button{flex:1;border:0;border-radius:0;background:transparent;color:var(--muted)}
+  nav button.active{background:var(--panel);color:var(--text)}
+  main{flex:1;display:flex;flex-direction:column;min-height:0}
+  .view{display:none;flex:1;flex-direction:column;min-height:0;padding:12px 16px;gap:12px}
+  .view.active{display:flex}
+
+  /* Joystick */
+  #joyWrap{flex:1;display:flex;align-items:center;justify-content:center;min-height:240px}
+  #joy{position:relative;width:min(78vw,52vh,340px);aspect-ratio:1;border-radius:50%;
+    background:radial-gradient(circle,#232a33 0%,#1a1f26 70%);border:2px solid var(--line);touch-action:none}
+  #joy::before,#joy::after{content:"";position:absolute;background:var(--line)}
+  #joy::before{left:50%;top:8%;bottom:8%;width:1px}
+  #joy::after{top:50%;left:8%;right:8%;height:1px}
+  #knob{position:absolute;left:50%;top:50%;width:34%;aspect-ratio:1;border-radius:50%;
+    transform:translate(-50%,-50%);background:var(--accent);box-shadow:0 6px 18px rgba(0,0,0,.5);z-index:1}
+  #joy.disabled #knob{background:#4b5563}
+  .row{display:flex;gap:10px;align-items:center}
+  .row > *{flex:1}
+  .readout{display:flex;justify-content:space-between;font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
+  label.slider{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+  input[type=range]{width:100%;accent-color:var(--accent)}
+  #stopBtn{font-size:18px;font-weight:600;padding:16px}
+
+  /* Terminal */
+  #log{flex:1;min-height:120px;overflow:auto;background:#0b0e12;border:1px solid var(--line);border-radius:10px;
+    padding:10px;font:13px/1.45 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-all}
+  #log .rx{color:#86efac} #log .tx{color:#93c5fd} #log .sys{color:var(--muted)}
+  input[type=text],select{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:10px;min-width:0}
+  .opts{display:flex;gap:10px;flex-wrap:wrap;font-size:13px;color:var(--muted);align-items:center}
+  .opts label{display:flex;align-items:center;gap:6px}
+  #unsupported{display:none;margin:12px 16px;padding:12px;border-radius:10px;background:#3b2a12;color:#fde68a;font-size:14px}
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>Bollerwagen</h1>
+  <button class="primary" id="connectBtn">Verbinden</button>
+</header>
+<div id="unsupported">
+  Dieser Browser unterstützt kein Web Bluetooth.<br>
+  <b>Android:</b> Chrome verwenden. <b>iPhone:</b> die kostenlose App „Bluefy – Web BLE Browser“ verwenden.<br>
+  Die Seite muss über <b>https://</b> geöffnet werden.
+</div>
+<div id="status">Nicht verbunden</div>
+<nav>
+  <button class="active" data-view="drive">Joystick</button>
+  <button data-view="term">Terminal</button>
+</nav>
+<main>
+  <section class="view active" id="drive">
+    <div id="joyWrap"><div id="joy" class="disabled"><div id="knob"></div></div></div>
+    <div class="readout"><span id="rdXY">X 0 · Y 0</span><span id="rdLast">–</span></div>
+    <label class="slider"><span>Max. Geschwindigkeit: <span id="spdVal">50 %</span></span>
+      <input type="range" id="spd" min="10" max="100" step="5" value="50">
+    </label>
+    <button class="danger" id="stopBtn">STOPP</button>
+  </section>
+
+  <section class="view" id="term">
+    <div id="log"></div>
+    <div class="opts">
+      <label>Zeilenende
+        <select id="eol">
+          <option value="">keins</option>
+          <option value="\n" selected>\n (LF)</option>
+          <option value="\r\n">\r\n (CR+LF)</option>
+          <option value="\r">\r (CR)</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="showJoy"> Joystick-Befehle anzeigen</label>
+      <button id="clearBtn">Leeren</button>
+    </div>
+    <form class="row" id="sendForm">
+      <input type="text" id="msg" placeholder="Text senden, z. B. AT" autocomplete="off" style="flex:3">
+      <button class="primary" type="submit">Senden</button>
+    </form>
+  </section>
+</main>
+
+<script>
+(() => {
+  // UUIDs des ESP32 (#1, BLE-Empfänger)
+  const SERVICE = '4f40b7b4-ea07-4d44-8487-858d474c00f5';
+  const RX_CHAR = '5c0018ae-4c4e-40ab-bc75-e5a295641fbf';  // Handy -> ESP32
+  const TX_CHAR = '9630e82e-72d2-423a-980f-37417e7c72bb';  // ESP32 -> Handy
+  const SEND_INTERVAL_MS = 100;   // 10x pro Sekunde (dient auch als Heartbeat)
+  const DEADZONE = 8;             // in Prozent
+
+  const $ = id => document.getElementById(id);
+  const enc = new TextEncoder(), dec = new TextDecoder();
+
+  let device = null, chr = null;
+  let writing = false, queue = [];
+  let joyX = 0, joyY = 0, stopped = true, rxBuf = '';
+
+  // ---------- UI: Tabs ----------
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+    document.querySelectorAll('nav button').forEach(x => x.classList.toggle('active', x === b));
+    document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.id === b.dataset.view));
+  });
+
+  // ---------- Terminal-Log ----------
+  const log = (text, cls = 'sys') => {
+    const el = $('log');
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 20;
+    const line = document.createElement('div');
+    line.className = cls;
+    const t = new Date().toLocaleTimeString('de-DE');
+    line.textContent = `${t} ${cls === 'rx' ? '←' : cls === 'tx' ? '→' : '•'} ${text}`;
+    el.appendChild(line);
+    while (el.childNodes.length > 500) el.removeChild(el.firstChild);
+    if (atBottom) el.scrollTop = el.scrollHeight;
+  };
+  const visible = s => s.replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+
+  const setStatus = (text, state) => {
+    $('status').textContent = text;
+    $('dot').className = 'dot' + (state ? ' ' + state : '');
+  };
+
+  // ---------- BLE ----------
+  if (!navigator.bluetooth) $('unsupported').style.display = 'block';
+
+  async function connect() {
+    if (!navigator.bluetooth) { alert('Web Bluetooth wird hier nicht unterstützt.'); return; }
+    try {
+      setStatus('Suche Gerät …', 'busy');
+      device = await navigator.bluetooth.requestDevice({
+        filters: [{ services: [SERVICE] }, { name: 'Bollerwagen' }, { name: 'ESP32' }],
+        optionalServices: [SERVICE]
+      });
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+      setStatus(`Verbinde mit ${device.name || 'Gerät'} …`, 'busy');
+      const server = await device.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE);
+      chr = await service.getCharacteristic(RX_CHAR);
+      try {
+        const tx = await service.getCharacteristic(TX_CHAR);
+        await tx.startNotifications();
+        tx.addEventListener('characteristicvaluechanged', onData);
+      } catch (e) { log('Hinweis: keine Rückmeldungen vom ESP32 (' + e.message + ')'); }
+      setStatus(`Verbunden: ${device.name || 'HM-10'}`, 'on');
+      log(`Verbunden mit ${device.name || 'HM-10'}`);
+      $('connectBtn').textContent = 'Trennen';
+      $('connectBtn').classList.remove('primary');
+      $('joy').classList.remove('disabled');
+    } catch (e) {
+      setStatus('Nicht verbunden: ' + e.message);
+      log('Fehler: ' + e.message);
+      chr = null;
+    }
+  }
+
+  function disconnect() {
+    if (chr) { queue = []; sendRaw('S\n'); }
+    setTimeout(() => device && device.gatt.connected && device.gatt.disconnect(), 150);
+  }
+
+  function onDisconnected() {
+    chr = null; queue = []; writing = false;
+    setStatus('Verbindung getrennt');
+    log('Verbindung getrennt');
+    $('connectBtn').textContent = 'Verbinden';
+    $('connectBtn').classList.add('primary');
+    $('joy').classList.add('disabled');
+    resetKnob();
+  }
+
+  function onData(ev) {
+    rxBuf += dec.decode(ev.target.value);
+    // Ganze Zeilen anzeigen, Rest puffern
+    let i;
+    while ((i = rxBuf.search(/\r?\n/)) >= 0) {
+      const lineEnd = rxBuf[i] === '\r' ? i + 2 : i + 1;
+      log(rxBuf.slice(0, i), 'rx');
+      rxBuf = rxBuf.slice(lineEnd);
+    }
+    // Daten ohne Zeilenende nicht ewig festhalten
+    clearTimeout(onData.t);
+    onData.t = setTimeout(() => { if (rxBuf) { log(rxBuf, 'rx'); rxBuf = ''; } }, 300);
+  }
+
+  // Schreiben: HM-10 nimmt max. 20 Byte pro Paket, Schreibvorgänge nacheinander
+  function sendRaw(str) {
+    if (!chr) return false;
+    const bytes = enc.encode(str);
+    for (let i = 0; i < bytes.length; i += 20) queue.push(bytes.slice(i, i + 20));
+    pump();
+    return true;
+  }
+  async function pump() {
+    if (writing || !chr) return;
+    writing = true;
+    try {
+      while (queue.length && chr) {
+        const chunk = queue.shift();
+        // ohne Antwort ist schneller; ältere Firmware kann nur "mit Antwort"
+        if (chr.properties.writeWithoutResponse && chr.writeValueWithoutResponse)
+          await chr.writeValueWithoutResponse(chunk);
+        else if (chr.writeValueWithResponse) await chr.writeValueWithResponse(chunk);
+        else await chr.writeValue(chunk);
+      }
+    } catch (e) {
+      log('Sendefehler: ' + e.message);
+      queue = [];
+    }
+    writing = false;
+  }
+
+  $('connectBtn').onclick = () => (device && device.gatt.connected) ? disconnect() : connect();
+
+  // ---------- Terminal senden ----------
+  $('sendForm').onsubmit = e => {
+    e.preventDefault();
+    const text = $('msg').value;
+    const eol = $('eol').value.replace('\\r', '\r').replace('\\n', '\n');
+    if (!text && !eol) return;
+    if (sendRaw(text + eol)) log(visible(text + eol), 'tx');
+    else log('Nicht verbunden');
+    $('msg').value = '';
+  };
+  $('clearBtn').onclick = () => { $('log').innerHTML = ''; };
+
+  // ---------- Joystick ----------
+  const joy = $('joy'), knob = $('knob');
+  let activePointer = null;
+
+  function moveKnob(clientX, clientY) {
+    const r = joy.getBoundingClientRect();
+    const radius = r.width / 2, max = radius * 0.66;
+    let dx = clientX - (r.left + radius), dy = clientY - (r.top + radius);
+    const d = Math.hypot(dx, dy);
+    if (d > max) { dx *= max / d; dy *= max / d; }
+    knob.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    let x = Math.round(dx / max * 100), y = Math.round(-dy / max * 100);
+    if (Math.hypot(x, y) < DEADZONE) { x = 0; y = 0; }
+    setJoy(x, y);
+  }
+  function resetKnob() {
+    knob.style.transform = 'translate(-50%,-50%)';
+    setJoy(0, 0);
+  }
+  function setJoy(x, y) {
+    const lim = +$('spd').value / 100;
+    joyX = Math.round(x * lim); joyY = Math.round(y * lim);
+    $('rdXY').textContent = `X ${joyX} · Y ${joyY}`;
+  }
+
+  joy.addEventListener('pointerdown', e => {
+    if (!chr) return;
+    activePointer = e.pointerId;
+    joy.setPointerCapture(e.pointerId);
+    stopped = false;
+    moveKnob(e.clientX, e.clientY);
+  });
+  joy.addEventListener('pointermove', e => { if (e.pointerId === activePointer) moveKnob(e.clientX, e.clientY); });
+  const release = e => {
+    if (e.pointerId !== activePointer) return;
+    activePointer = null;
+    resetKnob();
+    sendJoy(true); // sofort Nullstellung senden
+  };
+  joy.addEventListener('pointerup', release);
+  joy.addEventListener('pointercancel', release);
+  joy.addEventListener('lostpointercapture', release);
+
+  $('spd').oninput = () => { $('spdVal').textContent = $('spd').value + ' %'; };
+
+  $('stopBtn').onclick = () => {
+    activePointer = null; stopped = true; resetKnob();
+    queue = [];
+    if (sendRaw('S\n')) log('STOPP gesendet', 'tx');
+    if (navigator.vibrate) navigator.vibrate(80);
+  };
+
+  // Befehl: "J<x>,<y>\n"  x/y = -100..100  (z. B. "J-30,85\n")
+  let lastSent = '';
+  function sendJoy(force) {
+    if (!chr) return;
+    const cmd = stopped ? 'S\n' : `J${joyX},${joyY}\n`;
+    // nur senden, wenn Puffer leer ist (verhindert Rückstau bei langsamer Verbindung)
+    if (queue.length && !force) return;
+    sendRaw(cmd);
+    if (cmd !== lastSent && $('showJoy').checked) log(visible(cmd), 'tx');
+    lastSent = cmd;
+    $('rdLast').textContent = visible(cmd);
+  }
+  // regelmäßig senden – dient zugleich als Lebenszeichen für den Failsafe am Arduino
+  setInterval(() => sendJoy(false), SEND_INTERVAL_MS);
+
+  // Wenn die App in den Hintergrund geht: anhalten
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { activePointer = null; resetKnob(); sendJoy(true); }
+  });
+})();
+</script>
+</body>
+</html>
