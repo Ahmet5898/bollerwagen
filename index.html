@@ -42,7 +42,11 @@
   #joy::after{top:50%;left:8%;right:8%;height:1px}
   #knob{position:absolute;left:50%;top:50%;width:34%;aspect-ratio:1;border-radius:50%;
     transform:translate(-50%,-50%);background:var(--accent);box-shadow:0 6px 18px rgba(0,0,0,.5);z-index:1}
+  #joy{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
   #joy.disabled #knob{background:#4b5563}
+  #joy.active{border-color:var(--accent)}
+  body{overflow:hidden;-webkit-user-select:none;user-select:none}
+  input,#log{-webkit-user-select:text;user-select:text}
   .row{display:flex;gap:10px;align-items:center}
   .row > *{flex:1}
   .readout{display:flex;justify-content:space-between;font-variant-numeric:tabular-nums;color:var(--muted);font-size:13px}
@@ -277,23 +281,50 @@
     $('rdXY').textContent = `X ${joyX} · Y ${joyY}`;
   }
 
-  joy.addEventListener('pointerdown', e => {
-    if (!chr) return;
-    activePointer = e.pointerId;
-    joy.setPointerCapture(e.pointerId);
+  // Der Joystick lässt sich immer bewegen (auch ohne Verbindung, dann wird nur nichts gesendet).
+  // Touch-Events für iPhone/Bluefy und Android, Maus-Events für den PC.
+  function grab(id, x, y) {
+    activePointer = id;
     stopped = false;
-    moveKnob(e.clientX, e.clientY);
-  });
-  joy.addEventListener('pointermove', e => { if (e.pointerId === activePointer) moveKnob(e.clientX, e.clientY); });
-  const release = e => {
-    if (e.pointerId !== activePointer) return;
+    joy.classList.add('active');
+    if (!chr) $('rdLast').textContent = 'nicht verbunden';
+    moveKnob(x, y);
+  }
+  function release() {
+    if (activePointer === null) return;
     activePointer = null;
+    joy.classList.remove('active');
     resetKnob();
     sendJoy(true); // sofort Nullstellung senden
+  }
+
+  // --- Touch (Handy) ---
+  joy.addEventListener('touchstart', e => {
+    e.preventDefault();
+    if (activePointer !== null) return;
+    const t = e.changedTouches[0];
+    grab('t' + t.identifier, t.clientX, t.clientY);
+  }, { passive: false });
+  joy.addEventListener('touchmove', e => {
+    e.preventDefault();
+    for (const t of e.changedTouches)
+      if ('t' + t.identifier === activePointer) moveKnob(t.clientX, t.clientY);
+  }, { passive: false });
+  const touchEnd = e => {
+    e.preventDefault();
+    for (const t of e.changedTouches)
+      if ('t' + t.identifier === activePointer) release();
   };
-  joy.addEventListener('pointerup', release);
-  joy.addEventListener('pointercancel', release);
-  joy.addEventListener('lostpointercapture', release);
+  joy.addEventListener('touchend', touchEnd, { passive: false });
+  joy.addEventListener('touchcancel', touchEnd, { passive: false });
+
+  // --- Maus (PC) ---
+  joy.addEventListener('mousedown', e => {
+    e.preventDefault();
+    grab('m', e.clientX, e.clientY);
+  });
+  window.addEventListener('mousemove', e => { if (activePointer === 'm') moveKnob(e.clientX, e.clientY); });
+  window.addEventListener('mouseup', () => { if (activePointer === 'm') release(); });
 
   $('spd').oninput = () => { $('spdVal').textContent = $('spd').value + ' %'; };
 
